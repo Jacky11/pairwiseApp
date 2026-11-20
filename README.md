@@ -1,4 +1,4 @@
-# pairwiseApp — differential analysis of label-free proteomics data between two conditions
+# Differential analysis of label-free proteomics data between two conditions
 
 Shiny application (and command-line script) to compare two biological conditions from a
 MaxQuant `proteinGroups.txt` file or a Spectronaut report. It returns an Excel workbook
@@ -16,7 +16,6 @@ pvclust AU/BP p-values).
 5. **Filter 2** – proteins quantified in one condition and absent from the other are set aside (reported in separate sheets, with their average iBAQ).
 6. **Imputation** of the remaining missing values with `impute.mle` (or `impute.slsa`) of the R package [imp4p](https://CRAN.R-project.org/package=imp4p).
 7. **Test** – moderated t-test (limma, or paired limma); the p-values of the proteins whose |log2 fold-change| exceeds the threshold (default log2(2) = 1) are adjusted with the adaptive Benjamini–Hochberg procedure, the proportion of non-differential proteins being estimated by the *pounds* (or *slim*) method of [cp4p](https://CRAN.R-project.org/package=cp4p). A protein is significant if its adjusted p-value is below the FDR level (default 1%).
-   *Option* `conditional_pvalues`: before the adjustment, the p-value of each selected protein is made conditional on the selection |log2FC| > threshold, by dividing it by the p-value the protein would have with |log2FC| equal to the threshold (given its moderated standard error). Under the null hypothesis, these conditional p-values are uniformly distributed among the selected proteins. The conditional p-values are reported in the `ConditionalPvalues` sheet.
 
 The PowerPoint report also contains Venn/UpSet plots, missing-value counts, intensity
 distributions, correlation- and Jaccard-based sample clustering, PCA, volcano plots and
