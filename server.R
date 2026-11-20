@@ -10,7 +10,7 @@ options(shiny.maxRequestSize = 10 * 1024^3)  # uploads up to 10 GB
 explain_error <- function(msg) {
   if (grepl("read.table", msg)) {
     paste0("Error in read.table : check if the file is comma or tabulation separated. Error message : ", msg)
-  } else if (grepl("subscript out of bounds", msg) || grepl("factor level \\[[0-9]+\\] is duplicated", msg) ||
+  } else if (grepl("subscript out of bounds|indice hors limites", msg) || grepl("factor level \\[[0-9]+\\] is duplicated", msg) ||
              grepl("arguments imply differing number of rows", msg)) {
     paste0("Error : check the column names of your protein groups file. Error message : ", msg)
   } else if (grepl("no applicable method for 'ph_with' applied to an object of class ", msg)) {
@@ -40,6 +40,12 @@ shinyServer(function(input, output, session) {
       read_input(inFile$datapath, spectronaut = input$spectronaut, intensity = input$nameKind,
                  name = inFile$name, size = inFile$size),
       error = function(e) { log_messages$errors <- explain_error(conditionMessage(e)); NULL })
+  })
+
+  # no iBAQ column in the file: iBAQ values cannot be used
+  observeEvent(datasetInput(), {
+    if (!any(grepl("^iBAQ\\.", names(datasetInput()$data_init))))
+      updateRadioButtons(session, "nameIBAQ", selected = "No")
   })
 
   # Spectronaut files have no iBAQ / bait information
@@ -121,6 +127,7 @@ shinyServer(function(input, output, session) {
       log_messages$errors <- "Please choose an input file first."
       return(NULL)
     }
+    last_step <- ""
     out_dir <- file.path(tempdir(), paste0("pairwise_", format(Sys.time(), "%Y%m%d_%H%M%S"), "_", sample.int(1e6, 1)))
     res <- withProgress(message = 'Start !', value = 0, {
       tryCatch(
@@ -128,11 +135,14 @@ shinyServer(function(input, output, session) {
                      progress = function(m) incProgress(1 / 16, message = m),
                      log = function(m) {
                        message(m)
+                       if (!startsWith(m, "Warning")) last_step <<- m
                        log_messages$stdout <- c(log_messages$stdout, m)
                      }),
         error = function(e) {
           message("Error: ", conditionMessage(e))
-          log_messages$errors <- c(log_messages$errors, explain_error(conditionMessage(e)))
+          log_messages$errors <- c(log_messages$errors,
+                                   paste0(if (nzchar(last_step)) paste0("Error during the step '", last_step, "'. ") else "",
+                                          explain_error(conditionMessage(e))))
           NULL
         })
     })

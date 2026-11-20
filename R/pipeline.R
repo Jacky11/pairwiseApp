@@ -119,7 +119,6 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   }
   delprot = (sdelprot > 0)
 
-  parameters = parameters_table(p, del_cols)
 
   #################################
   # Sample names
@@ -138,6 +137,23 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   pepnamec2 = paste("Peptides.", name_c2, sep = "")
   upepnamec1 = paste("Unique.peptides.", name_c1, sep = "")
   upepnamec2 = paste("Unique.peptides.", name_c2, sep = "")
+
+  # columns needed for each selected sample
+  miss <- c(setdiff(c(pepnamec1, pepnamec2), colnames(ds$data_fin_id)),
+            setdiff(c(upepnamec1, upepnamec2), colnames(ds$data_fin_idd)))
+  if (length(miss) > 0)
+    stop("Column(s) not found in the input file: ", paste(miss, collapse = ", "),
+         ". Each selected sample needs 'Peptides <sample>' and 'Unique peptides <sample>' columns.")
+  if (ibaq) {
+    miss <- setdiff(paste0("iBAQ.", c(name_c1, name_c2)), colnames(dat))
+    if (length(miss) > 0) {
+      log(paste0("Warning: iBAQ column(s) not found (", paste(miss, collapse = ", "),
+                 "): the analysis is run without iBAQ values."))
+      ibaq <- FALSE
+      p$ibaq <- FALSE
+    }
+  }
+  parameters = parameters_table(p, del_cols)
 
   #################################
   # Data matrices; a value is quantified if it has enough unique peptides
@@ -505,7 +521,7 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   # Filter 2: proteins present in one condition and absent in the other
   #################################
   step("Filtering present/absent proteins")
-  dat_nbNA_filtered = dat_nbNA[!ldat[, 1] %in% liste_prot_1opc, ]
+  dat_nbNA_filtered = dat_nbNA[!ldat[, 1] %in% liste_prot_1opc, , drop = FALSE]
   liste_prot_p1a2 = ldat2[which((dat_nbNA_filtered[, 1] != nb_rep[1]) & (dat_nbNA_filtered[, 2] == nb_rep[2])), 1]
   liste_prot_a1p2 = ldat2[which((dat_nbNA_filtered[, 1] == nb_rep[1]) & (dat_nbNA_filtered[, 2] != nb_rep[2])), 1]
 
@@ -1051,7 +1067,8 @@ mean_log2_ibaq <- function(tab, sample_names) {
     if (!is.numeric(m[, 1])) m = apply(gsub(" ", "", m), 2, function(x) as.numeric(x))
     m = log2(as.matrix(m[, ibaqnames]))
   } else {
-    if (!is.numeric(m[, 1])) m = as.numeric(gsub(" ", "", m))
+    if (!is.numeric(m[, 1])) m[] = as.numeric(gsub(" ", "", m))
+    mode(m) = "numeric"
     m = log2(t(as.matrix(m[, ibaqnames])))
   }
   m[is.infinite(m)] = NA
