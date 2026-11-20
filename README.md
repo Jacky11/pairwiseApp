@@ -1,4 +1,4 @@
-# pairwiseApp — differential analysis of label-free proteomics data between two conditions
+# Differential analysis of label-free proteomics data between two conditions
 
 Shiny application (and command-line script) to compare two biological conditions from a
 MaxQuant `proteinGroups.txt` file or a Spectronaut report. It returns an Excel workbook
