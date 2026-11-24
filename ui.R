@@ -30,7 +30,7 @@ shinyUI(fluidPage(
     # Columns flagging the proteins to delete
     htmlOutput("protnameDel"),
 
-    HTML("<p style= 'font-size : 14px;font-weight: bold;'>Important: if you want to use SAINT, the first condition has to be the control samples and the second one the bait samples. Also, the names of baits have to be insert in the column names by renaming columns Peptides, Unique peptides, Intensity, iBAQ,LFQ intensity as : \"Column_name bait_name sample_name\" (e.g. LFQ intensity CD59 CD59_1GFP).</p>"),
+    HTML("<p style= 'font-size : 14px;font-weight: bold;'>Important: if you want to use SAINT, the first condition has to be the control samples and the second one the bait samples. The name of the second condition is used as bait name.</p>"),
 
     checkboxInput('saint', HTML("<p style= 'font-size : 14px;font-weight: bold;'> Check if you want to use SAINT <p>")),
 
@@ -46,9 +46,16 @@ shinyUI(fluidPage(
 
     numericInput("N_Unique_Identified", "Minimal number of unique identified peptides for a quantified value:", 1),
 
-    numericInput("numFilter", "Minimal number of observed values in at least one condition:", 2),
+    numericInput("numFilter", "Minimal number of quantified values for a protein to be sufficiently quantified in a condition:", 2),
 
-    numericInput("numFilter2", "Minimal percentage of observed values in at least one condition (between 0 and 100):", 0),
+    numericInput("numFilter2", "Minimal percentage of quantified values (of the samples of the condition) for a protein to be sufficiently quantified in a condition (between 0 and 100):", 0),
+
+    radioButtons('quantIn', 'A protein is tested if it is sufficiently quantified in:',
+                 c('at least one condition' = 'one', 'each condition' = 'each'), 'one', inline = TRUE),
+
+    numericInput("presentMin", "Present/absent proteins: minimal number of quantified values in the condition where the protein is present (empty = same as above):", NA, min = 1),
+
+    numericInput("absentMax", "Present/absent proteins: maximal number of quantified values in the condition where the protein is considered absent:", 0, min = 0),
 
     radioButtons('nameNorm', 'Normalization method:', c(None = 'None', Median_Centering = 'Median'), 'Median'),
 

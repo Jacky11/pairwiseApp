@@ -1,7 +1,12 @@
 #################################################
 # SAINTexpress (optional): interaction scores for AP-MS experiments
-# Condition 1 = control samples, condition 2 = bait samples; the bait name must be
-# in the column names ("Intensity <bait> <sample>", e.g. "LFQ intensity CD59 CD59_1GFP").
+# Condition 1 = control samples, condition 2 = bait samples; the bait name is the
+# name of condition 2.
+#  - MaxQuant files: preys are identified by their majority protein IDs and protein
+#    lengths are read in the "Sequence length" column.
+#  - Spectronaut files: preys are identified by the first accession of their protein
+#    group, and protein lengths are estimated from PG.MolecularWeight (mean residue
+#    mass of 110 Da).
 # SAINTexpress is run in the saint/ sub-folder of the output folder, where its
 # input and output files are kept.
 #################################################
@@ -16,7 +21,7 @@ saint_executable <- function(path = NULL) {
   normalizePath(candidates[1])
 }
 
-run_saint <- function(ds, ldat2, vars1, vars2, p, out_dir) {
+run_saint <- function(ds, ldat2, vars1, vars2, p, out_dir, log = function(msg) NULL) {
   exe <- saint_executable(p$saint_exe)
   saint_dir <- file.path(out_dir, "saint")
   dir.create(saint_dir, showWarnings = FALSE)
@@ -30,16 +35,48 @@ run_saint <- function(ds, ldat2, vars1, vars2, p, out_dir) {
     datSa[, grep("Intensity.", colnames(datSa))] = 2^datSa[, grep("Intensity.", colnames(datSa))]
   }
 
+  spectro = isTRUE(p$spectronaut)
+  len_col = grep("equence.len", x = colnames(dataSaint))
+  if (length(len_col) == 0) {
+    mw_col = grep("MolecularWeight", x = colnames(dataSaint))
+    if (length(mw_col) == 0)
+      stop("SAINT needs the protein lengths: no 'Sequence length' (MaxQuant) or 'PG.MolecularWeight' (Spectronaut) column in the input file.")
+    log("SAINT: protein lengths estimated from the molecular weight (PG.MolecularWeight / 110 Da).")
+  }
+  id_col = if (spectro) "Protein.IDs" else grep("Majority.protein.", x = colnames(dataSaint))
+
   seq_len = NULL
   maj_prot_Id = NULL
   for (i in 1:nrow(datSa)) {
-    req = dataSaint[datSa[i, 1], grep("equence.len", x = colnames(dataSaint))]
-    if (length(req) == 1) {
-      seq_len = c(seq_len, as.numeric(req))
+    if (length(len_col) > 0) {
+      req = dataSaint[datSa[i, 1], len_col]
+      if (length(req) == 1) {
+        seq_len = c(seq_len, as.numeric(req))
+      } else {
+        seq_len = c(seq_len, as.numeric(unlist(strsplit(as.character(req[1]), ";"))[1]))
+      }
     } else {
-      seq_len = c(seq_len, as.numeric(unlist(strsplit(as.character(req[1]), ";"))[1]))
+      mw = convert_number(unlist(strsplit(as.character(dataSaint[datSa[i, 1], mw_col[1]]), ";")))
+      mw = mw[!is.na(mw)]
+      seq_len = c(seq_len, if (length(mw) > 0) round(mw[1] / 110) else NA)
     }
-    maj_prot_Id = c(maj_prot_Id, dataSaint[datSa[i, 1], grep("Majority.protein.", x = colnames(dataSaint))])
+    maj_prot_Id = c(maj_prot_Id, dataSaint[datSa[i, 1], id_col])
+  }
+  # proteins without molecular weight: median length
+  if (length(len_col) == 0) seq_len[is.na(seq_len)] = round(median(seq_len, na.rm = TRUE))
+  # gene names (PreyGene column of SAINTexpress): first gene of the protein group
+  first_token = function(v) sapply(strsplit(gsub("\"", "", as.character(v)), ";"), function(x) if (length(x) == 0) NA else trimws(x[1]))
+  rows_sa = datSa[, 1]
+  if (spectro) {
+    gene = first_token(dataSaint$Majority.protein.IDs[rows_sa])
+  } else if ("Gene.names" %in% colnames(dataSaint)) {
+    gene = first_token(dataSaint$Gene.names[rows_sa])
+  } else if ("Fasta.headers" %in% colnames(dataSaint)) {
+    gene = sapply(as.character(dataSaint$Fasta.headers[rows_sa]), function(h) {
+      m = regmatches(h, regexpr("GN=[^ ;]+", h)); if (length(m) == 0) NA else sub("GN=", "", m)
+    }, USE.NAMES = FALSE)
+  } else {
+    gene = rep(NA, length(rows_sa))
   }
   dataSa = data.frame(datSa, seq = seq_len, prot_id = maj_prot_Id)
 
@@ -55,20 +92,11 @@ run_saint <- function(ds, ldat2, vars1, vars2, p, out_dir) {
 
   # bait file
   databait = data.frame(nom = NULL, type = NULL, test_control = NULL)
+  bait_name = gsub("[^A-Za-z0-9_.-]", "_", c2)
   for (i in 1:length(short.name)) {
-    isbait = grep(short.name[i], vars2, fixed = T)
-    if (length(isbait) > 0) {
-      databait[i, "test_control"] = "T"
-      if (p$intensity == "LFQ") {
-        isbait = unlist(strsplit(vars2[isbait[1]], "intensity."))[2]
-      } else {
-        isbait = unlist(strsplit(vars2[isbait[1]], "Intensity."))[2]
-      }
-      databait[i, "type"] = unlist(strsplit(isbait, "\\."))[1]
-    } else {
-      databait[i, "test_control"] = "C"
-      databait[i, "type"] = "Ctrl"
-    }
+    is_bait = colnames(dataIntensity)[i] %in% vars2
+    databait[i, "test_control"] = if (is_bait) "T" else "C"
+    databait[i, "type"] = if (is_bait) bait_name else "Ctrl"
     databait[i, "nom"] = short.name[i]
   }
   databait = databait[, c(3, 2, 1)]
@@ -93,6 +121,9 @@ run_saint <- function(ds, ldat2, vars1, vars2, p, out_dir) {
     aa = gsub(pattern = "\"", replacement = "", x = unlist(strsplit(prey[i, 1], split = ";")))
     name_mod[i] = aa[1]
   }
+  # the gene names are not given to SAINTexpress (preys sharing a gene name would be
+  # merged); they are added to the PreyGene column of the results
+  gene[is.na(gene) | gene == ""] = name_mod[is.na(gene) | gene == ""]
   prey2 = cbind(name_mod, dataSa$seq)
   prey22 = na.omit(prey2)
   prey222 = as.numeric(prey22[, 2])
@@ -115,6 +146,10 @@ run_saint <- function(ds, ldat2, vars1, vars2, p, out_dir) {
   file.rename(file.path(saint_dir, "list.txt"), list_file)
 
   dataSAINTFINAL = read.table(list_file, sep = "\t", header = TRUE, fill = TRUE, comment.char = "")
+  if ("PreyGene" %in% colnames(dataSAINTFINAL)) {
+    g = gene[match(dataSAINTFINAL$Prey, name_mod)]
+    dataSAINTFINAL$PreyGene = ifelse(is.na(g), dataSAINTFINAL$PreyGene, g)
+  }
 
   # fold-change between baits and controls (on the filtered, normalised data)
   dataAvgP = dataSAINTFINAL
@@ -122,30 +157,26 @@ run_saint <- function(ds, ldat2, vars1, vars2, p, out_dir) {
   for (i in 1:ncol(dataFold)) { dataFold[, i] = as.numeric(dataFold[, i]) }
   dataFold[dataFold == 0] = NA
 
-  name_data = unique(databait[, 2])
-  if (p$intensity == "LFQ") {
-    name_databait = paste("LFQ.intensity.", name_data, sep = "")
-  } else {
-    name_databait = paste("Intensity.", name_data, sep = "")
-  }
-  test = NULL
-  for (i in 1:length(name_databait)) {
-    test = cbind(test, dataFold[, grep(name_databait[i], colnames(dataFold))])
-  }
-  control = dataFold[, !(colnames(dataFold) %in% colnames(test))]
-  control = control[, -1]
+  # bait samples = condition 2, control samples = condition 1
+  test = dataFold[, vars2, drop = FALSE]
+  control = dataFold[, vars1, drop = FALSE]
   control = apply(control, 1, mean, na.rm = T)
   test = apply(test, 1, mean, na.rm = T)
   foldchange = test - control
 
   dataAvgP = data.frame(dataAvgP["Prey"], dataAvgP["AvgP"])
-  dataprot = dataSaint[, grepl("Majority.protein.|Fasta.headers", colnames(dataSaint))]
+  if (spectro) {
+    dataprot = dataSaint[, c("Protein.IDs", "Fasta.headers")]
+  } else {
+    dataprot = dataSaint[, grepl("Majority.protein.|Fasta.headers", colnames(dataSaint))]
+  }
   dataprot = dataprot[dataFold[, 1], ]
   dataprot = data.frame(dataprot, foldchange)
+  first_id = sapply(strsplit(gsub("\"", "", as.character(dataprot[, 1])), ";"), function(v) v[1])
 
   dataFinal = data.frame(nameProteins = NULL, FoldChange = NULL, AvgP = NULL, Gene = NULL)
   for (i in 1:nrow(dataAvgP)) {
-    x = grep(dataAvgP[i, 1], dataprot[, 1], fixed = T)
+    x = which(first_id == dataAvgP[i, 1])
     if (length(x) != 0) {
       dataFinal = rbind(dataFinal, data.frame(nameProteins = dataAvgP[i, 1], FoldChange = dataprot[x, 3], AvgP = as.numeric(dataAvgP[i, 2]), Gene = dataprot[x, 2]))
     }

@@ -19,8 +19,11 @@ default_params <- function() {
     cond2_samples       = NULL,
     ibaq                = TRUE,       # average iBAQ of present/absent proteins
     min_unique_peptides = 1,          # a value is quantified if >= this number of unique peptides
-    min_observed        = 2,          # filter 1: min. number of observed values in a condition
-    min_percent_observed = 0,         # filter 1: min. % of observed values in a condition
+    min_observed        = 2,          # min. number of quantified values for a protein to be sufficiently quantified in a condition
+    min_percent_observed = 0,         # min. % of quantified values (of the samples of the condition), combined with min_observed
+    quantified_in       = "one",      # tested if sufficiently quantified in "one" (at least one) or "each" condition
+    present_min         = NA,         # present/absent: min. quantified values where present (NA = same as above)
+    absent_max          = 0,          # present/absent: max. quantified values where absent
     normalization       = "Median",   # "Median" or "None"
     imputation          = "MLE",      # "MLE", "SLSA" or "None"
     fold_change         = 2,          # minimal fold-change (not log2)
@@ -60,6 +63,12 @@ check_params <- function(p) {
   p <- utils::modifyList(default_params(), p)
   stop_if <- function(cond, ...) if (cond) stop(..., call. = FALSE)
   stop_if(!p$intensity %in% c("Raw", "LFQ"), "intensity must be 'Raw' or 'LFQ'")
+  stop_if(!p$quantified_in %in% c("one", "each"), "quantified_in must be 'one' or 'each'")
+  stop_if(!is.numeric(p$min_observed) || p$min_observed < 1, "min_observed must be >= 1")
+  stop_if(!is.numeric(p$min_percent_observed) || p$min_percent_observed < 0 || p$min_percent_observed > 100,
+          "min_percent_observed must be between 0 and 100")
+  stop_if(!is.numeric(p$absent_max) || p$absent_max < 0, "absent_max must be >= 0")
+  stop_if(!is.null(p$present_min) && !is.na(p$present_min) && p$present_min < 1, "present_min must be >= 1")
   stop_if(!p$normalization %in% c("Median", "None"), "normalization must be 'Median' or 'None'")
   stop_if(!p$imputation %in% c("MLE", "SLSA", "None"), "imputation must be 'MLE', 'SLSA' or 'None'")
   stop_if(!p$test %in% c("LIMMA", "paired.LIMMA"), "test must be 'LIMMA' or 'paired.LIMMA'")
@@ -91,8 +100,8 @@ parameters_table <- function(p, delete_columns) {
                   'IBAQ values:',
                   'Apply a present/absent filter:',
                   'Minimal number of unique identified peptides for a quantified value:',
-                  'Minimal number of observed values in at least one condition:',
-                  'Minimal percentage of observed values in at least one condition (between 0 and 100):',
+                  'Minimal number of quantified values for a protein to be sufficiently quantified in a condition:',
+                  'Minimal percentage of quantified values for a protein to be sufficiently quantified in a condition (between 0 and 100):',
                   'Normalization method:',
                   'Imputation method:',
                   'Select a minimal ratio (fold-change) between conditions (2 by default, i.e. log2(fold-change) threshold is fixed at log2(2)=1):',
@@ -100,7 +109,10 @@ parameters_table <- function(p, delete_columns) {
                   'Estimator of the proportion of differentially abundant proteins:',
                   'FDR level:',
                   'SAINT',
-                  'Conditional p-values (given |log2FC| > threshold):')
+                  'Conditional p-values (given |log2FC| > threshold):',
+                  'Proteins tested if sufficiently quantified in:',
+                  'Present/absent: minimal number of quantified values in the condition where the protein is present:',
+                  'Present/absent: maximal number of quantified values in the condition where the protein is absent:')
   param_values = c(p$intensity,
                    paste(delete_columns, collapse = "; "),
                    p$cond1_name,
@@ -119,6 +131,9 @@ parameters_table <- function(p, delete_columns) {
                    p$pi0_method,
                    p$fdr,
                    p$saint,
-                   isTRUE(p$conditional_pvalues))
+                   isTRUE(p$conditional_pvalues),
+                   if (p$quantified_in == "each") "each condition" else "at least one condition",
+                   if (is.null(p$present_min) || is.na(p$present_min)) "same as above" else p$present_min,
+                   p$absent_max)
   data.frame(cbind(param_label, param_values))
 }

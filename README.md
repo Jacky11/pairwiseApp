@@ -1,7 +1,8 @@
-# Differential analysis of label-free proteomics data between two conditions
+# pairwiseApp — differential analysis of label-free proteomics data between two conditions
 
 Shiny application (and command-line script) to compare two biological conditions from a
-MaxQuant `proteinGroups.txt` file or a Spectronaut report. It returns an Excel workbook
+MaxQuant `proteinGroups.txt` file or a Spectronaut protein-group report (tab-, semicolon-
+or comma-separated). It returns an Excel workbook
 with all the result tables and a PowerPoint report with the figures. Optionally, it runs
 SAINTexpress (AP-MS experiments) and analyses of the overlap between samples and of the
 robustness of the sample clustering (Jaccard and overlap indices, PERMANOVA, betadisper,
@@ -9,13 +10,14 @@ pvclust AU/BP p-values).
 
 ## Analysis pipeline
 
-1. A value is quantified if at least *n* unique peptides are identified (default 1); intensities (Raw or LFQ) are log2-transformed.
+1. **Quantified values** – a quantified value is a non-zero intensity measured with at least *u* unique peptides (default 1); intensities (Raw or LFQ) are log2-transformed.
 2. Proteins flagged `+` in the *Reverse*, *Potential contaminant* and *Only identified by site* columns are removed.
-3. **Filter 1** – proteins without enough quantified values are removed (default: at least 2 values in one condition).
-4. **Normalisation** – within each condition, the samples are centred on the mean of their medians (medians computed on the proteins without missing value in the condition).
-5. **Filter 2** – proteins quantified in one condition and absent from the other are set aside (reported in separate sheets, with their average iBAQ).
-6. **Imputation** of the remaining missing values with `impute.mle` (or `impute.slsa`) of the R package [imp4p](https://CRAN.R-project.org/package=imp4p).
+3. **Filter 1 (number of quantified values)** – for each condition *k* with *n_k* samples, a protein is *sufficiently quantified* if it has at least max(*m*, ⌈*p*·*n_k*⌉) quantified values (`min_observed` *m*, default 2; `min_percent_observed` *p*, default 0%). A protein is **tested** if it is sufficiently quantified in at least one condition (`quantified_in: one`, default) or in each condition (`quantified_in: each`), and has more than `absent_max` quantified values in each condition.
+4. **Normalisation** – within each condition, the samples are centred on the mean of their medians (medians computed on the proteins kept by the filters that have no missing value in the condition).
+5. **Filter 2 (present/absent proteins)** – a protein with at most `absent_max` quantified values (default 0) in one condition and at least `present_min` values (default: the number required in filter 1) in the other one is **present/absent**: it is not tested and is reported as more abundant in the condition where it is present (with its average iBAQ). All other proteins are **removed**; the sheet `without_enough_values` gives the reason for each of them, and all the result tables give the number of quantified values of each protein in each condition.
+6. **Imputation** of the missing values of the tested proteins with `impute.mle` (or `impute.slsa`) of the R package [imp4p](https://CRAN.R-project.org/package=imp4p).
 7. **Test** – moderated t-test (limma, or paired limma); the p-values of the proteins whose |log2 fold-change| exceeds the threshold (default log2(2) = 1) are adjusted with the adaptive Benjamini–Hochberg procedure, the proportion of non-differential proteins being estimated by the *pounds* (or *slim*) method of [cp4p](https://CRAN.R-project.org/package=cp4p). A protein is significant if its adjusted p-value is below the FDR level (default 1%).
+   *Option* `conditional_pvalues`: before the adjustment, the p-value of each selected protein is made conditional on the selection |log2FC| > threshold, by dividing it by the p-value the protein would have with |log2FC| equal to the threshold (given its moderated standard error). Under the null hypothesis, these conditional p-values are uniformly distributed among the selected proteins. The conditional p-values are reported in the `ConditionalPvalues` sheet.
 
 The PowerPoint report also contains Venn/UpSet plots, missing-value counts, intensity
 distributions, correlation- and Jaccard-based sample clustering, PCA, volcano plots and
@@ -106,8 +108,12 @@ SAINTexpress (Teo *et al.*, J Proteomics 2014) is not distributed with this repo
 Download it from <https://saint-apms.sourceforge.net> and put `SAINTexpress-int.exe`
 (Windows) or `SAINTexpress-int` (Linux/macOS, made executable) in `bin/`, or give its path
 with the `saint_exe` parameter. Condition 1 must contain the control samples and
-condition 2 the bait samples, and the bait name must be part of the column names
-(e.g. `LFQ intensity CD59 CD59_1GFP`).
+condition 2 the bait samples; the name of condition 2 is used as bait name.
+
+* MaxQuant files: preys are identified by their majority protein IDs; protein lengths are read in the `Sequence length` column.
+* Spectronaut files: preys are identified by the first accession of their protein group; the
+  protein lengths required by the prey file are estimated from `PG.MolecularWeight` (mean
+  residue mass of 110 Da).
 
 ## License
 

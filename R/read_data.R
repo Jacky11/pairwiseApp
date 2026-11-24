@@ -126,8 +126,15 @@ read_input <- function(file, spectronaut = FALSE, intensity = c("Raw", "LFQ"),
 
   dat <- NULL
   if (spectronaut) {
-    dat <- tryCatch(read.csv(file, header = TRUE, sep = ";"),
-                    error = function(e) read.csv(file, header = TRUE, sep = "\t", quote = ""))
+    # separator detected on the header line (tab, semicolon or comma)
+    first <- readLines(file, n = 1, warn = FALSE)
+    counts <- c(tab = lengths(regmatches(first, gregexpr("\t", first))),
+                semicolon = lengths(regmatches(first, gregexpr(";", first))),
+                comma = lengths(regmatches(first, gregexpr(",", first))))
+    dat <- switch(names(which.max(counts)),
+                  tab = read.csv(file, header = TRUE, sep = "\t", quote = ""),
+                  semicolon = read.csv(file, header = TRUE, sep = ";"),
+                  comma = read.csv(file, header = TRUE, sep = ","))
     dat = spectronaut_convert(dat)
   } else {
     dat = read.csv(file, header = TRUE, sep = "\t", quote = "")

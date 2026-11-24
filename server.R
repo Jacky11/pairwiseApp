@@ -48,14 +48,6 @@ shinyServer(function(input, output, session) {
       updateRadioButtons(session, "nameIBAQ", selected = "No")
   })
 
-  # Spectronaut files have no iBAQ / bait information
-  observeEvent(input$spectronaut, {
-    if (input$spectronaut) {
-      updateRadioButtons(session, "nameIBAQ", selected = "No")
-      updateCheckboxInput(session, "saint", value = FALSE)
-    }
-  })
-
   #################################
   # Dynamic UI elements
   #################################
@@ -93,6 +85,9 @@ shinyServer(function(input, output, session) {
       min_unique_peptides = input$N_Unique_Identified,
       min_observed = input$numFilter,
       min_percent_observed = input$numFilter2,
+      quantified_in = input$quantIn,
+      present_min = if (is.null(input$presentMin) || is.na(input$presentMin)) NA else input$presentMin,
+      absent_max = if (is.null(input$absentMax) || is.na(input$absentMax)) 0 else input$absentMax,
       normalization = input$nameNorm,
       imputation = input$nameImpute,
       fold_change = input$FCT,

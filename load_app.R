@@ -39,6 +39,6 @@ local({
     app_dir <- if (is.null(f)) getwd() else dirname(normalizePath(f))
     options(pairwise.app_dir = app_dir)
   }
-  for (f in c("adjustp.R", "limma-test.R", "venn.R", "overlap_clustering.R", "utils.R", "params.R", "read_data.R", "saint.R", "pipeline.R"))
+  for (f in c("adjustp.R", "limma-test.R", "venn.R", "overlap_clustering.R", "utils.R", "params.R", "filters.R", "read_data.R", "saint.R", "pipeline.R"))
     sys.source(file.path(app_dir, "R", f), envir = globalenv())
 })

@@ -15,8 +15,11 @@ cond2_samples: [Intensity.Trt_1, Intensity.Trt_2, Intensity.Trt_3]
 
 ibaq: true                # average iBAQ of the present/absent proteins
 min_unique_peptides: 1    # a value is quantified if it has at least this number of unique peptides
-min_observed: 2           # filter 1: minimal number of observed values in at least one condition
-min_percent_observed: 0   # filter 1: minimal % of observed values in at least one condition
+min_observed: 2           # a protein is sufficiently quantified in a condition if it has at least this number
+min_percent_observed: 0   #   of quantified values and at least this % of quantified values in the condition
+quantified_in: one        # tested if sufficiently quantified in "one" (at least one) or "each" condition
+present_min: ~            # present/absent: min. quantified values where present (~ = same as above)
+absent_max: 0             # present/absent: max. quantified values where considered absent
 normalization: Median     # Median or None
 imputation: MLE           # MLE, SLSA or None (imp4p)
 fold_change: 2            # minimal fold-change (not log2)

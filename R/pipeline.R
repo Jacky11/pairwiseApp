@@ -50,6 +50,8 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   nbc2 = length(vars2)
   FCT = log2(p$fold_change)
   FDRT = p$fdr
+  th <- filter_thresholds(p, nbc1, nbc2)
+  ftxt <- filter_methods_text(p, th, p$cond1_name, p$cond2_name)
   ibaq <- isTRUE(p$ibaq)
   editable_file <- out(paste0("Editable_plots_", p$cond2_name, "_vs_", p$cond1_name, ".pptx"))
   editable <- function(x) {
@@ -69,19 +71,26 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   doc = officer::ph_with(x = doc, location = officer::ph_location_type(type = "title"), value = "Data analysis pipeline")
 
   point0 = paste("Data used:", ds$chemin, "(", ds$sizee, " bytes)")
-  point1 = paste("1. An intensity value is quantified if at least", p$min_unique_peptides, " unique peptides are identified.", p$intensity, "intensities are logged (log2).")
-  point2 = "2. Reverse (potentially misidentified), Potential contaminants and Only identified by site proteins are deleted."
-  point3 = paste("3. Filter 1 : only proteins with at least", p$min_observed, "quantified intensity values in at least one condition, and with a proportion of observed values of at least", paste0(p$min_percent_observed, "%"), "in at least one condition, are kept. This filter is used to delete potentially misidentified proteins.")
+  point1 = paste0("1. Quantified values: ", ftxt$definition, " ", if (p$intensity == "LFQ") "LFQ" else "Raw",
+                  " intensities are log2-transformed; zero intensities are considered as missing values.")
+  del_for_text <- if (is.null(p$delete_columns)) names(ds$datdelprot) else p$delete_columns
+  point2 = if (length(del_for_text) > 0) {
+    paste0("2. Proteins flagged with '+' in the column(s) ", paste(gsub(".", " ", del_for_text, fixed = TRUE), collapse = ", "),
+           " of the input file (e.g. reverse sequences, potential contaminants, proteins only identified by site) are removed.")
+  } else {
+    "2. No column of the input file flags proteins to remove (reverse sequences, contaminants)."
+  }
+  point3 = paste("3. Filter 1 (number of quantified values):", ftxt$tested)
   if (p$normalization == "Median") {
-    point4 = "4. In each condition the intensity values are normalized. Within a same condition, they are centered on the mean of the medians of intensities in each sample of the condition."
+    point4 = "4. Normalisation: within each condition, the log2 intensities of each sample are centred on the mean of the medians of the samples of the condition. The medians are computed on the proteins kept by the filters (tested and present/absent proteins) that have no missing value in the condition."
   } else {
     point4 = "4. In each condition the intensity values are not normalized."
   }
-  point5 = "5. Filter 2 : proteins absent in a condition and present in another are put aside. These proteins can directly be assumed differentially abundant between the conditions."
+  point5 = paste("5. Filter 2 (present/absent proteins):", ftxt$present, ftxt$removed)
   if (p$imputation == "MLE") {
-    point6 = "6. The remaining missing values of the dataset are imputed. The impute.mle function of the R package imp4p is used for this purpose."
+    point6 = "6. Imputation: the missing values of the tested proteins are imputed condition by condition with the impute.mle function of the R package imp4p."
   } else if (p$imputation == "SLSA") {
-    point6 = "6. The remaining missing values of the dataset are imputed. The impute.slsa function of the R package imp4p is used for this purpose."
+    point6 = "6. Imputation: the missing values of the tested proteins are imputed with the impute.slsa function of the R package imp4p."
   } else {
     point6 = "6. The missing values are not imputed."
   }
@@ -424,13 +433,22 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
     dat_nbNA[, i] = apply(tab[, (k:(k + nb_rep[i] - 1))], 1, function(x) sum(is.na(x)))
     k = k + nb_rep[i]
   }
-  ldel1 = which(dat_nbNA[, 1] >= (nb_rep[1] - p$min_observed + 1))
-  ldel2 = which(dat_nbNA[, 1] >= (nb_rep[1] * (1 - p$min_percent_observed / 100) + 1))
-  ldel3 = which(dat_nbNA[, 2] >= (nb_rep[2] - p$min_observed + 1))
-  ldel4 = which(dat_nbNA[, 2] >= (nb_rep[2] * (1 - p$min_percent_observed / 100) + 1))
-  ldel = union(intersect(ldel1, ldel3), intersect(ldel2, ldel4))
+  # number of quantified values per condition and category of each protein (R/filters.R)
+  obs1 = nb_rep[1] - dat_nbNA[, 1]
+  obs2 = nb_rep[2] - dat_nbNA[, 2]
+  flt = classify_proteins(obs1, obs2, th, p$cond1_name, p$cond2_name)
+  nobs = data.frame(id = ldat[, 1], o1 = obs1, o2 = obs2, reason = flt$reason)
+  count_cols = c(paste0("Nb quantified values in ", p$cond1_name, " (out of ", nb_rep[1], ")"),
+                 paste0("Nb quantified values in ", p$cond2_name, " (out of ", nb_rep[2], ")"))
+  add_counts <- function(tab, ids) {
+    if (is.null(ids) || nrow(tab) == 0 || length(ids) != nrow(tab)) return(tab)
+    j = match(ids, nobs$id)
+    tab[[count_cols[1]]] = nobs$o1[j]
+    tab[[count_cols[2]]] = nobs$o2[j]
+    tab
+  }
 
-  liste_prot_1opc = ldat[ldel, 1]
+  liste_prot_1opc = ldat[flt$category == "removed", 1]
   ldat2 = ldat[!ldat[, 1] %in% liste_prot_1opc, ]
   n4 = nrow(ldat2)
 
@@ -460,6 +478,12 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   datdel_fin$genename = ann$genename
   datdel_fin <- datdel_fin[, c((ncol(datdel_fin) - 2):ncol(datdel_fin), 1:(ncol(datdel_fin) - 3))]
   colnames(datdel_fin)[1:6] = c("Uniprot accession", "Protein name", "Gene name", "Fasta.headers", "Majority.protein.IDs", "Mol.weight.kDa.")
+  if (nrow(datdel_fin) > 0) {
+    j = match(datdel$id, nobs$id)
+    datdel_fin = data.frame(datdel_fin[, 1:3], Reason = nobs$reason[j], check.names = FALSE,
+                            setNames(data.frame(nobs$o1[j], nobs$o2[j]), count_cols),
+                            datdel_fin[, 4:ncol(datdel_fin)])
+  }
 
   wb <- openxlsx::createWorkbook()
   openxlsx::addWorksheet(wb, "without_enough_values")
@@ -503,6 +527,7 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   label_impute = dat[dat$id %in% ldat2[, 1], ]
   imput_matrix = data.frame(Majority.protein.Ids = label_impute[, grep("Majority.protein.", x = colnames(label_impute))],
                             Fasta.headers = label_impute$Fasta.headers, ldat2i)
+  imput_matrix = add_counts(imput_matrix, label_impute$id)
 
   #################################
   # SAINT (optional)
@@ -510,7 +535,7 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   saint_res <- NULL
   if (isTRUE(p$saint)) {
     step("SAINT analysis")
-    saint_res <- run_saint(ds, ldat2, vars1, vars2, p, out_dir)
+    saint_res <- run_saint(ds, ldat2, vars1, vars2, p, out_dir, log = log)
     openxlsx::addWorksheet(wb, "SAINT")
     openxlsx::writeDataTable(wb, "SAINT", x = saint_res$dataSAINTFINAL)
     openxlsx::addWorksheet(wb, "Bait")
@@ -521,9 +546,8 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   # Filter 2: proteins present in one condition and absent in the other
   #################################
   step("Filtering present/absent proteins")
-  dat_nbNA_filtered = dat_nbNA[!ldat[, 1] %in% liste_prot_1opc, , drop = FALSE]
-  liste_prot_p1a2 = ldat2[which((dat_nbNA_filtered[, 1] != nb_rep[1]) & (dat_nbNA_filtered[, 2] == nb_rep[2])), 1]
-  liste_prot_a1p2 = ldat2[which((dat_nbNA_filtered[, 1] == nb_rep[1]) & (dat_nbNA_filtered[, 2] != nb_rep[2])), 1]
+  liste_prot_p1a2 = ldat[flt$category == "present1", 1]
+  liste_prot_a1p2 = ldat[flt$category == "present2", 1]
 
   ldat2e = ldat2[!ldat2[, 1] %in% c(liste_prot_p1a2, liste_prot_a1p2), ]
   n5 = nrow(ldat2e)
@@ -548,7 +572,7 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
     }
   } else { datp1a2 = data.frame(0) }
   openxlsx::addWorksheet(wb, paste0("PresIn", shortname1, "_AbsIn", shortname2))
-  openxlsx::writeDataTable(wb, paste0("PresIn", shortname1, "_AbsIn", shortname2), x = datp1a2)
+  openxlsx::writeDataTable(wb, paste0("PresIn", shortname1, "_AbsIn", shortname2), x = add_counts(datp1a2, datp1a2$id))
 
   # proteins absent in condition 1 and present in condition 2
   aviBAQa1p2 = NULL
@@ -564,7 +588,7 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
     }
   } else { data1p2 = data.frame(0) }
   openxlsx::addWorksheet(wb, paste0("PresIn", shortname2, "_AbsIn", shortname1))
-  openxlsx::writeDataTable(wb, paste0("PresIn", shortname2, "_AbsIn", shortname1), x = data1p2)
+  openxlsx::writeDataTable(wb, paste0("PresIn", shortname2, "_AbsIn", shortname1), x = add_counts(data1p2, data1p2$id))
 
   #################################
   # Number of proteins along the pipeline; distributions after norm. and imp.
@@ -631,6 +655,8 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
     k = k + nb_rep[i]
   }
   FC = moyy[, 2] - moyy[, 1]
+  # only the tested proteins are considered (present/absent proteins are reported separately)
+  FC[!ldat2[, 1] %in% ldat[flt$category == "tested", 1]] = NA
 
   if (p$test == "paired.LIMMA") {
     res_ana = quiet(limma.test.paired(ldat2i, Conditions = conditions))
@@ -826,7 +852,7 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   ann = annotate_proteins(datFCinf$Protein.IDs, datFCinf_fin$Fasta.headers)
   datFCinf_fin = add_annotation_columns(datFCinf_fin, ann)
   openxlsx::addWorksheet(wb, paste0("FC_inf_to", 2^FCT))
-  openxlsx::writeDataTable(wb, paste0("FC_inf_to", 2^FCT), x = datFCinf_fin)
+  openxlsx::writeDataTable(wb, paste0("FC_inf_to", 2^FCT), x = add_counts(datFCinf_fin, datFCinf$id))
 
   # proteins with |log2FC| above the threshold but not significant
   datnonsig = fill_missing_columns(datt[which(datt[, 3] > FDRT), ])
@@ -839,7 +865,7 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
     datnonsig_fin = add_annotation_columns(datnonsig_fin, ann)
   }
   openxlsx::addWorksheet(wb, paste0("NonSignif_with_FC_sup_to", 2^FCT))
-  openxlsx::writeDataTable(wb, paste0("NonSignif_with_FC_sup_to", 2^FCT), x = datnonsig_fin)
+  openxlsx::writeDataTable(wb, paste0("NonSignif_with_FC_sup_to", 2^FCT), x = add_counts(datnonsig_fin, datnonsig$id))
 
   # more abundant in condition 2: absent in 1 / present in 2 + significant with FC > 0
   p1a2 = dat[dat$id %in% liste_prot_a1p2, ]
@@ -851,7 +877,7 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   np1a2 = nrow(p1a2)
   nlAD1 = nrow(lAD)
   mab12 <- more_abundant_table(liste_prot_12, int_pattern)
-  datta <- mab12$table
+  datta <- add_counts(mab12$table, mab12$liste$id)
 
   # more abundant in condition 1
   a1p2 = dat[dat$id %in% liste_prot_p1a2, ]
@@ -863,7 +889,7 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
   na1p2 = nrow(a1p2)
   nlAD2 = nrow(lAD)
   mab21 <- more_abundant_table(liste_prot_21, int_pattern)
-  datta2 <- mab21$table
+  datta2 <- add_counts(mab21$table, mab21$liste$id)
 
   # heatmaps of the proteins of interest (one slide)
   if (nrow(datta) != 0 || nrow(datta2) != 0) {
@@ -951,6 +977,9 @@ run_pairwise <- function(p, out_dir = ".", data = NULL,
     openxlsx::writeDataTable(wb, "ConditionalPvalues", x = cond_tab)
   }
 
+  add_description_sheet(wb, p, name1 = levels(conditions)[1], name2 = levels(conditions)[2],
+                        fc_col = fc_col, FCT = FCT, FDRT = FDRT, ftxt = ftxt, count_cols = count_cols)
+
   xlsx_file <- out(paste0("Final_", levels(conditions)[2], "_vs_", levels(conditions)[1], ".xlsx"))
   openxlsx::saveWorkbook(wb, xlsx_file, overwrite = TRUE)
   pptx_file <- out(paste0("Differential_Analysis_", levels(conditions)[2], "_vs_", levels(conditions)[1], ".pptx"))
@@ -994,6 +1023,86 @@ pairwise_version <- function() "1.0.0"
 conditional_cutoff <- function(fit, threshold) {
   j = ncol(fit$p.value)
   2 * pt(-threshold / (fit$stdev.unscaled[, j] * sqrt(fit$s2.post)), df = fit$df.total)
+}
+
+# "Description" sheet (first sheet of the workbook): content of each sheet and
+# meaning of the main columns
+add_description_sheet <- function(wb, p, name1, name2, fc_col, FCT, FDRT, ftxt, count_cols) {
+  s1 <- short_name(name1); s2 <- short_name(name2)
+  fc_txt <- paste0("|log2(fold-change)| > ", round(FCT, 4), " (fold-change ", p$fold_change, ")")
+  sheets <- c(
+    "Description" = "This sheet: content of each sheet of the workbook and meaning of the main columns.",
+    "without_enough_values" = paste0("Proteins removed: neither tested nor present/absent. ", ftxt$definition, " ", ftxt$tested, " ", ftxt$present,
+                                     " The Reason column gives the reason for each protein; the intensities are those of the input file."),
+    "SAINT" = paste0("SAINTexpress output (one row per prey): Bait = name of condition 2; Prey = protein identifier; PreyGene = gene name (from the input file); ",
+                     "Intensity / ctrlIntensity = intensities in the bait / control samples (separated by |); AvgP = average probability of interaction over the bait replicates; ",
+                     "MaxP = maximal probability; SaintScore; OddsScore; FoldChange = SAINTexpress fold-change between bait and control intensities; ",
+                     "BFDR = Bayesian false discovery rate."),
+    "Bait" = "Bait file given to SAINTexpress: sample name, bait name (name of condition 2, or Ctrl for the controls), T (test) or C (control).",
+    setNames(paste0("Proteins present in ", name1, " and absent from ", name2, ". ", ftxt$present,
+                    if (isTRUE(p$ibaq)) paste0(" 'Average iBAQ ", name1, "' = mean log2(iBAQ) over the samples of ", name1, ".") else ""),
+             paste0("PresIn", s1, "_AbsIn", s2)),
+    setNames(paste0("Proteins present in ", name2, " and absent from ", name1, ". ", ftxt$present,
+                    if (isTRUE(p$ibaq)) paste0(" 'Average iBAQ ", name2, "' = mean log2(iBAQ) over the samples of ", name2, ".") else ""),
+             paste0("PresIn", s2, "_AbsIn", s1)),
+    setNames(paste0("Tested proteins whose |log2(fold-change)| is below the threshold (", round(FCT, 4), "): not considered for the FDR control (adjusted p-value = NA). ",
+                    ftxt$tested),
+             paste0("FC_inf_to", 2^FCT)),
+    setNames(paste0("Proteins with ", fc_txt, " whose adjusted p-value is above the FDR level (", FDRT, ")."),
+             paste0("NonSignif_with_FC_sup_to", 2^FCT)),
+    setNames(paste0("Proteins more abundant in ", name2, " than in ", name1, ": present in ", name2, " and absent in ", name1,
+                    " (no p-value), and significant proteins (adjusted p-value < ", FDRT, ", ", fc_txt, ") with a positive log2(fold-change)."),
+             paste0("MoreAbIn", s2, "ThanIn", s1)),
+    setNames(paste0("Proteins more abundant in ", name1, " than in ", name2, ": present in ", name1, " and absent in ", name2,
+                    " (no p-value), and significant proteins (adjusted p-value < ", FDRT, ", ", fc_txt, ") with a negative log2(fold-change)."),
+             paste0("MoreAbIn", s1, "ThanIn", s2)),
+    "MoreAbundInOneOrTheOther" = "The two previous sheets together.",
+    "SpectronautDataAfterConversion" = "Spectronaut input data after conversion to the column names used by the application (Intensity.<sample>, Peptides.<sample>, ...).",
+    "DataVolcano" = "First columns (identifiers, log2(fold-change), p-value, adjusted p-value) of all the proteins of the sheets FC_inf_to, NonSignif_with_FC_sup_to and MoreAbIn: data of the volcano plot.",
+    "Imputation" = paste0("log2 intensities after filter 1, normalisation (", p$normalization, ") and imputation (", p$imputation,
+                          "): values used for the statistical test of the tested proteins. The sheet also contains the present/absent proteins, which are not tested (they can keep missing values in the condition where they are absent)."),
+    "ParametersAnalysis" = "Parameters of the analysis.",
+    "SampleCorrelation" = "Pearson correlation between samples computed on log2 intensities (pairwise complete observations), before filter 1, normalisation and imputation.",
+    "SamplCorrAfterNormImput" = "Pearson correlation between samples computed on log2 intensities after filter 1, normalisation and imputation.",
+    "ConditionalPvalues" = paste0("Proteins with ", fc_txt, ": p-value, p-value that the protein would have with |log2(fold-change)| equal to the threshold, ",
+                                  "conditional p-value (ratio of the two) and adjusted p-value computed from the conditional p-values.")
+  )
+  present <- openxlsx::sheets(wb)
+  sheets <- sheets[names(sheets) %in% c("Description", present)]
+  sheets <- sheets[order(match(names(sheets), c("Description", present)))]
+
+  columns <- c(
+    "Uniprot accession / Protein name / Gene name" = "Extracted from the protein identifiers and FASTA headers of the input file.",
+    "Majority.protein.IDs, Fasta.headers, Peptides, Mol..weight..kDa." = "Columns of the input file (Spectronaut: gene names are in Majority.protein.IDs).",
+    setNames(paste0("Difference between the mean log2 intensities of ", name2, " and ", name1, " (after normalisation and imputation)."), fc_col),
+    "pvalue / p.value" = paste0("p-value of the ", if (p$test == "LIMMA") "moderated t-test (limma)" else "paired moderated t-test (limma)", "."),
+    "Adjusted pvalue / Adjusted p.value" = paste0("p-value adjusted with the adaptive Benjamini-Hochberg procedure (proportion of non-differential proteins estimated with the ",
+                                                  p$pi0_method, " method of cp4p) among the proteins with ", fc_txt,
+                                                  if (isTRUE(p$conditional_pvalues)) ", computed from the conditional p-values (see ConditionalPvalues)" else "",
+                                                  ". A protein is significant if its adjusted p-value is below ", FDRT, "."),
+    "Intensity.<sample> / LFQ.intensity.<sample>" = "Intensities of the input file (not log-transformed, not normalised), except in the Imputation sheet (log2, normalised, imputed).",
+    "iBAQ.<sample>" = "iBAQ values of the input file.",
+    setNames(paste0("Number of quantified values of the protein in each condition (", ftxt$tested, ")"),
+             paste(count_cols, collapse = " / ")),
+    "Reason (sheet without_enough_values)" = "Why the protein is neither tested nor present/absent."
+  )
+
+  openxlsx::addWorksheet(wb, "Description")
+  openxlsx::writeData(wb, "Description", "Content of the sheets", startRow = 1, startCol = 1)
+  openxlsx::writeDataTable(wb, "Description", data.frame(Sheet = names(sheets), Content = unname(sheets)),
+                           startRow = 2, tableName = "Sheets")
+  r <- length(sheets) + 5
+  openxlsx::writeData(wb, "Description", "Main columns", startRow = r - 1, startCol = 1)
+  openxlsx::writeDataTable(wb, "Description", data.frame(Column = names(columns), Meaning = unname(columns)),
+                           startRow = r, tableName = "Columns")
+  openxlsx::setColWidths(wb, "Description", cols = 1:2, widths = c(45, 150))
+  openxlsx::addStyle(wb, "Description", openxlsx::createStyle(wrapText = TRUE, valign = "top"),
+                     rows = 2:(r + length(columns)), cols = 1:2, gridExpand = TRUE)
+  openxlsx::addStyle(wb, "Description", openxlsx::createStyle(textDecoration = "bold", fontSize = 12),
+                     rows = c(1, r - 1), cols = 1)
+  n <- length(openxlsx::sheets(wb))
+  openxlsx::worksheetOrder(wb) <- c(n, seq_len(n - 1))
+  invisible(wb)
 }
 
 # Heatmap of a correlation (or Jaccard) matrix between samples
